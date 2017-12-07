@@ -1,0 +1,437 @@
+#!/bin/bash
+# POSIX not quite  uses (( )) for arithmetic expressions
+
+# Configures a default installation of Rasperian for a Pi-Zero as follows
+#  # | Feature
+#  1      Mounting boot and rootfs partitions at /media/${USER}
+#  2      enabling ssh
+#  3      enabling drivers: dwc2, g_ether
+#  4      setting dev and host ethernet mac addresses
+#  5      setting dev and host ipv4 addresses (calculated but not configured)
+#  6      setting default ip route (not yet implemented)
+#  7      setting dns server ip addresses (not yet implemented)
+#  8      setting options: i2c, spi
+#  9      adding users
+# 10      Place a file at the top of the boot and rootfs partions
+#         to identify the pi
+#  H
+
+die() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+show_help() {
+  echo "There is no help for the wicked!"
+}
+# This ensures we are not contaminated by variables from the environment.
+# -----------------
+#
+# Initializations:
+#
+# -----------------
+    need_to_mount=""
+    separator=""
+#
+#   partition filesystem mount points
+#
+    boot=/media/${USER}/boot
+    rootfs=/media/${USER}/rootfs
+
+#
+#   Files edited or created by this script
+#
+    ssh_file=$boot/ssh
+    config_dot_txt_file=$boot/config.txt
+    cmdline_dot_txt_file=$boot/cmdline.txt
+    rndis_dot_conf_file=$rootfs/etc/modprobe.d/rndis.conf
+    etc_host_name_file=$rootfs/etc/host_name
+    etc_hosts_file=$rootfs/etc/hosts
+    etc_network_interfaces_file=$rootfs/etc/network/interfaces
+    etc_dhcpcd_dot_conf=$rootfs/etc_dhcpcd.conf
+    previous_file=~/.configure-pi-zero/configure-pi-zero-previous
+
+#
+#   Initialize all the option variables.
+#
+    verbose=1
+    next=0
+    previous=0 # default is to repeat the previous entries or prompt if there were none
+    prompt=0
+    host_name="raspberrypi"
+    host_id=2
+    spi=0
+    i2c=0
+    users=""
+    dev_addr_eth=00:17:00:00:00:42
+    host_addr_eth=00:17:00:00:50:17
+    dev_addr_ip=192.168.1.200
+    host_addr_ip=192.168.1.150
+    route_ip=192.168.1.1
+    dns_ip=8.8.8.8,8.8.4.4
+#
+#  End of Initializations
+#
+
+#
+# Special handling if 1st option is reset
+# This removes the data for previous runs
+# so you can start dt_over
+#
+  case $1 in
+  	-r|--reset)
+  	    echo Removing previous entries
+  	    rm -f $previous_file
+  	    shift
+  	    ;;
+  esac
+#
+# If a previous file of settings is found, list them and use them
+#
+  if [[ -e $previous_file ]]
+  then
+  	echo 'Previous'
+  	cat   $previous_file
+  	source $previous_file
+  fi
+#
+# Process any remaining options
+#  Thanks to the author of http://mywiki.wooledge.org/BashFAQ/035
+#  for option parsing.
+
+  while :; do
+    case $1 in
+  	  -r|--reset)
+        rm -f $previous_file
+  	    exit
+  	    ;;
+      -e|--dev-addr-eth)
+        dev_add_eth="$2"
+        shift
+        ;;
+      -E|--host-addr-eth)
+        host_addr_eth="$2"
+        shift
+        ;;
+      -i|--dev-addr-ip)
+        dev_addr_ip="$2"
+  	    shift
+        ;;
+  	  -I|--host-addr-ip)
+        host_addr_ip="$2"
+        ;;
+      -H|--host_name)
+        host_name="$2"
+  	    shift
+        ;;
+      -n|--next)
+  	    previous=0
+        next=1
+        ;;
+      --spi|--SPI)
+        spi=0
+        ;;
+      --i2c|--I2C)
+        i2c=0
+        ;;
+      --users)
+        ;;
+      --users=?*)
+        users=${1#*=} # Delete everything up to "=" and assign the remainder.
+        ;;
+      --users=)         # Handle the case of an empty --file=
+        die 'ERROR: "--users" requires a non-empty option argument.'
+        ;;
+      -h|-\?|--help)
+        show_help    # Display a usage synopsis.
+        exit
+        ;;
+      -v|--verbose)
+        verbose=$((verbose + 1))  # Each -v adds 1 to verbosity.
+        ;;
+      --)              # End of all options.
+        shift
+        break
+        ;;
+      -?*)
+        printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+        ;;
+      *)               # Default case: No more options, so break out of the loop.
+        break
+    esac
+    shift
+  done
+#
+# Separate the alphabetic and numeric parts of the hostname.
+# This is only needed if you want to configure more than one pi-zero
+#
+  host_name_letters=${host_name%%[0-9]*}
+  host_number=${host_name##*[A-Za-z_-]}
+  if [[ "$host_number" == "" ]]
+  then
+  	next_host_number=0
+  else
+  	next_host_number=$host_number
+  fi
+  if ((next));
+  then
+  	if [[ "$host_number" != "" ]]
+  	then
+  		(( next_host_number=host_number+1 ))
+  	else
+  		next_host_number=0
+  	fi
+  	next_host_number=$(printf "%02d" $next_host_number)
+  	host_name=${host_name_letters}${next_host_number}
+  fi
+#
+# Construct the required mac and IP addresses for a speicific pi
+#
+  hash1=$(echo $(sha1sum <<<"$host_name_letters"|cut -c2-3))
+  hash2=$(echo $(sha1sum <<<"$host_name_letters"|cut -c6-7))
+  IFS=: read -ra dev_e <<< "${dev_addr_eth}"
+  IFS=: read -ra host_e <<< "${host_addr_eth}"
+  dev_addr_eth=${dev_e[0]}:${dev_e[1]}:$hash1:$hash2:$(printf "%02d" $next_host_number):${dev_e[5]}
+  host_addr_eth=${host_e[0]}:${host_e[1]}:$hash1:$hash2:$(printf "%02d" $next_host_number):${host_e[5]}
+  next_host_number=$(printf "%02d" $next_host_number)
+  dev_addr_ip=${dev_addr_ip%.*}.$((next_host_number+${dev_addr_ip##*.}))
+  host_addr_ip=${host_addr_ip%.*}.$((next_host_number+${host_addr_ip##*.}))
+#
+# rewrite the file that will be sourced to get the previous entries.
+#
+  configs(){
+    echo host_name=$host_name
+    echo dev_addr_eth=$dev_addr_eth
+    echo host_addr_eth=$host_addr_eth
+    echo \# dev_addr_ip=$dev_addr_ip
+    echo \# host_addr_ip=$host_addr_ip
+    echo \# next=$next
+    echo route_ip=$route_ip
+    echo dns_ip=$dns_ip
+    echo users=""$users""
+    echo i2c=$i2c
+    echo spi=$spi
+    echo
+    echo '#'
+    echo '# dev and host ethernet address:'
+    echo '#'
+    echo '# octets 1 and 2 = 00:17:'
+    echo '# octets 3 and 4 are from a hash of the alphabetic part of the hostname'
+    echo '# octet 5 is the numeric part of the host name or 00'
+    echo '# octet 6 is set to 17 for the host address '
+    echo '#                or 42 for the rndis device address'
+    echo '#'
+    echo '# IP address:'
+    echo '#'
+    echo '# octets 1-3 from the starting dev or host ip address'
+    echo '# octet 4 is the sum of the numeric part of the host name or 00'
+    echo '#                       and octet 4 of the starting dev or host ip address'
+    echo '#'
+  }
+echo "Current Mashine Settings:"
+echo ""
+  configs |sed s/\# //
+  configs > $previous_file
+
+
+# -----------------------------------------------------------
+#
+#  Feature 1 -Mounting boot and rootfs partitions at /media/${USER}
+#  Do we need to mount the boot and/or rootfs partitions?
+#  Are they mounted where they are supposed to be?
+#
+# -----------------------------------------------------------
+
+if [[ ! -e /media/${USER}/boot ]]
+then
+	need_to_mount=$boot
+	separator=" and "
+fi
+
+if [[ ! -e /media/${USER}/rootfs ]]
+then
+	need_to_mount="${need_to_mount}${separator}$rootfs"
+fi
+
+if [[ "${need_to_mount}" != "" ]]
+then
+
+#
+#      Apparently we need to mount or re-mount the boot and/or rootfs?
+#
+
+	echo "You need to have both partitions on the Raspian sd card mounted to continue"
+	echo ""
+	echo "Please use the disk utility to mount"
+	echo ""
+	echo "$need_to_mount"
+	echo ""
+	echo "The disks utilities will be started when you press Enter to continue"
+	echo ""
+	echo "If you find either the boot or rootfs sd card partitions are"
+	echo "   already mounted at a location other than /media/${USER}/"
+	echo "   You should unmount them"
+	echo ""
+	echo "When you the sd card partitions are mounted at /media/${USER}/, "
+	echo "close the disks utility."
+	echo ""
+	echo "Press Enter to start the disk utility"
+	echo ""
+	read enter_key
+	/usr/bin/gnome-disks
+
+fi
+echo SD card partitions are mounted as $boot and $rootfs
+
+# -----------------------------------------------
+#
+# Feature 2 - Enabling ssh
+# We will be using ssh to communicate with the pi
+# Creating this file allows it
+#
+# -----------------------------------------------
+
+if [[ ! -e $ssh_file ]]
+then
+       touch $ssh_file
+	echo Created $ssh_file file
+
+else
+	echo $ssh_file file previously created
+fi
+echo
+# -----------------------------------------------------------------
+#
+# Feature 3 - Part 1
+# Add dt_overlay=dwc2 to the config.txt file in the boot partition.
+#
+# -----------------------------------------------------------------
+
+
+if [[ ! -e $config_dot_txt_file || "$(grep -q 'dtoverlay=dwc2'  $config_dot_txt_file; echo $?)" != "0" ]]
+then
+	echo "adding dtoverlay=dwc2 to $config_dot_txt_file"
+	cat  <<EOD >>$config_dot_txt_file
+dtoverlay=dwc2
+
+EOD
+else
+	echo dtoverlay=dwc2 previously added to $config_dot_txt_file
+fi
+echo
+# ----------------------------------------------------------------------------
+#
+# Feature 3 - Part 2
+# Add modules-load=dwc2,g_ether after rootwait in the line containing rootwait
+#
+# ----------------------------------------------------------------------------
+
+if [[ "$(grep -q 'modules-load=dwc2,g_ether'  $cmdline_dot_txt_file; echo $?)" != "0" ]]
+then
+	echo "adding dwc2,g_ether to $cmdline_dot_txt_file"
+	sed -i 's/rootwait/rootwait modules-load=dwc2,g_ether/' $cmdline_dot_txt_file
+else
+	echo previously added dwc2,g_ether to $cmdline_dot_txt_file
+fi
+echo
+# ----------------------------------------------------------------------------
+#
+#  Feature 4 - Set static Ethernet Mac Addresses
+#  Set $rndis_dot_conf_file to contain only:
+#  options g_ether host_addr=00:17:17:17:ww:xx dev_addr=00:17:17:42:yy:zz
+#
+# ----------------------------------------------------------------------------
+
+if [[ -e rndis_dot_conf_file ]]
+then
+	echo $rndis_dot_conf_file previously contained
+	cat $rndis_dot_conf_file
+	echo
+fi
+host_addr_number=$host_name_id
+
+let dev_addr_number=$host_addr_number+50 # You can only have 50 Pi zeros with the same prefix.
+
+options_line="options g_ether host_addr=$host_addr_eth dev_addr=$dev_addr_eth"
+
+
+sudo echo $options_line | sudo tee  $rndis_dot_conf_file > /dev/null
+
+echo $rndis_dot_conf_file now contains only
+cat  $rndis_dot_conf_file
+echo
+
+#
+# Set host_name in /etc/host_name and /etc/hosts
+#
+echo $etc_host_name_file previously contained $(cat $etc_host_name_file)
+sudo echo $host_name$host_name_id | sudo tee $etc_host_name_file > /dev/null
+echo $etc_host_name_file now contains $(cat $etc_host_name_file)
+
+echo $etc_hosts_file previously contained $(grep "127.0.1.1" $etc_hosts_file)
+sudo sed -i "s/127.0.1.1.*/127.0.1.1   $host_name$host_name_id/" $etc_hosts_file
+echo $etc_hosts_file now contains         $(grep "127.0.1.1" $etc_hosts_file)
+echo
+
+# ------------------------------------------------
+#
+#  Feature 5 - setting dev and host ipv4 addresses
+# (calculated but not configured)
+#
+# ------------------------------------------------
+# -------------------------------------
+#
+#  Feature 6 - setting default ip route
+#  (not yet implemented)
+#
+# --------------------------------------
+# -----------------------------------------------------------------
+#
+#  Feature 7 - setting dns server ip addresses
+#  (not yet implemented)
+#
+# ------------------------------------------------------------------
+# --------------------------------------
+#
+#  Feature 8 - setting options: i2c, spi
+#  Enable i2c and spi communication
+#
+# --------------------------------------
+
+if (( $i2c))
+then
+  sed -i s/\#dtparam=i2c_arm=on/dtparam=i2c_arm=on/ $config_dot_txt_file
+fi
+if (( $spi))
+then
+  sed -i s/\#dtparam=spi=on/dtparam=spi=on/ $config_dot_txt_file
+fi
+# --------------------------------
+#
+#  Feature 9 - adding users
+#
+# --------------------------------
+#--------------------------------
+#
+# Feature 10 - Place a file at the top of the boot and rootfs partions
+#              to identify the pi
+#
+# --------------------------------
+sudo touch $boot/$host_name
+sudo touch $rootfs/$host_name
+# --------------------------------
+#
+# check results
+#
+# --------------------------------
+sudo gedit $config_dot_txt_file $cmdline_dot_txt_file \
+		$rndis_dot_conf_file \
+		$etc_host_name_file \
+		$etc_hosts_file
+# --------------------------------
+#
+# Manual Edits
+#
+# --------------------------------
+
+sudo gedit $etc_network_interfaces_file \
+		$etc_dhcpcd_dot_conf
