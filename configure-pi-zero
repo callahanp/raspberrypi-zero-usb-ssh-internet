@@ -44,7 +44,7 @@ show_help() {
     config_dot_txt_file=$boot/config.txt
     cmdline_dot_txt_file=$boot/cmdline.txt
     rndis_dot_conf_file=$rootfs/etc/modprobe.d/rndis.conf
-    etc_host_name_file=$rootfs/etc/host_name
+    etc_hostname_file=$rootfs/etc/hostname
     etc_hosts_file=$rootfs/etc/hosts
     etc_network_interfaces_file=$rootfs/etc/network/interfaces
     etc_dhcpcd_dot_conf=$rootfs/etc_dhcpcd.conf
@@ -57,7 +57,7 @@ show_help() {
     next=0
     previous=0 # default is to repeat the previous entries or prompt if there were none
     prompt=0
-    host_name="raspberrypi"
+    hostname="raspberrypi"
     host_id=2
     spi=0
     i2c=0
@@ -119,8 +119,8 @@ show_help() {
   	  -I|--host-addr-ip)
         host_addr_ip="$2"
         ;;
-      -H|--host_name)
-        host_name="$2"
+      -H|--hostname)
+        hostname="$2"
   	    shift
         ;;
       -n|--next)
@@ -164,8 +164,8 @@ show_help() {
 # Separate the alphabetic and numeric parts of the hostname.
 # This is only needed if you want to configure more than one pi-zero
 #
-  host_name_letters=${host_name%%[0-9]*}
-  host_number=${host_name##*[A-Za-z_-]}
+  hostname_letters=${hostname%%[0-9]*}
+  host_number=${hostname##*[A-Za-z_-]}
   if [[ "$host_number" == "" ]]
   then
   	next_host_number=0
@@ -181,13 +181,13 @@ show_help() {
   		next_host_number=0
   	fi
   	next_host_number=$(printf "%02d" $next_host_number)
-  	host_name=${host_name_letters}${next_host_number}
+  	hostname=${hostname_letters}${next_host_number}
   fi
 #
 # Construct the required mac and IP addresses for a speicific pi
 #
-  hash1=$(echo $(sha1sum <<<"$host_name_letters"|cut -c2-3))
-  hash2=$(echo $(sha1sum <<<"$host_name_letters"|cut -c6-7))
+  hash1=$(echo $(sha1sum <<<"$hostname_letters"|cut -c2-3))
+  hash2=$(echo $(sha1sum <<<"$hostname_letters"|cut -c6-7))
   IFS=: read -ra dev_e <<< "${dev_addr_eth}"
   IFS=: read -ra host_e <<< "${host_addr_eth}"
   dev_addr_eth=${dev_e[0]}:${dev_e[1]}:$hash1:$hash2:$(printf "%02d" $next_host_number):${dev_e[5]}
@@ -199,7 +199,7 @@ show_help() {
 # rewrite the file that will be sourced to get the previous entries.
 #
   configs(){
-    echo host_name=$host_name
+    echo hostname=$hostname
     echo dev_addr_eth=$dev_addr_eth
     echo host_addr_eth=$host_addr_eth
     echo \# dev_addr_ip=$dev_addr_ip
@@ -347,7 +347,7 @@ then
 	cat $rndis_dot_conf_file
 	echo
 fi
-host_addr_number=$host_name_id
+host_addr_number=$hostname_id
 
 let dev_addr_number=$host_addr_number+50 # You can only have 50 Pi zeros with the same prefix.
 
@@ -361,14 +361,14 @@ cat  $rndis_dot_conf_file
 echo
 
 #
-# Set host_name in /etc/host_name and /etc/hosts
+# Set hostname in /etc/hostname and /etc/hosts
 #
-echo $etc_host_name_file previously contained $(cat $etc_host_name_file)
-sudo echo $host_name$host_name_id | sudo tee $etc_host_name_file > /dev/null
-echo $etc_host_name_file now contains $(cat $etc_host_name_file)
+echo $etc_hostname_file previously contained $(cat $etc_hostname_file)
+sudo echo $hostname$hostname_id | sudo tee $etc_hostname_file > /dev/null
+echo $etc_hostname_file now contains $(cat $etc_hostname_file)
 
 echo $etc_hosts_file previously contained $(grep "127.0.1.1" $etc_hosts_file)
-sudo sed -i "s/127.0.1.1.*/127.0.1.1   $host_name$host_name_id/" $etc_hosts_file
+sudo sed -i "s/127.0.1.1.*/127.0.1.1   $hostname$hostname_id/" $etc_hosts_file
 echo $etc_hosts_file now contains         $(grep "127.0.1.1" $etc_hosts_file)
 echo
 
@@ -416,8 +416,8 @@ fi
 #              to identify the pi
 #
 # --------------------------------
-sudo touch $boot/$host_name
-sudo touch $rootfs/$host_name
+sudo touch $boot/$hostname
+sudo touch $rootfs/$hostname
 # --------------------------------
 #
 # check results
@@ -425,7 +425,7 @@ sudo touch $rootfs/$host_name
 # --------------------------------
 sudo gedit $config_dot_txt_file $cmdline_dot_txt_file \
 		$rndis_dot_conf_file \
-		$etc_host_name_file \
+		$etc_hostname_file \
 		$etc_hosts_file
 # --------------------------------
 #
