@@ -261,7 +261,7 @@ then
 
 	echo "You need to have both partitions on the Raspian sd card mounted to continue"
 	echo ""
-	echo "Please use the disk utility to mount"
+	echo "Please insert a Raspian SD Card and use the disk utility to mount its partitions"
 	echo ""
 	echo "$need_to_mount"
 	echo ""
@@ -423,15 +423,9 @@ sudo touch $rootfs/$hostname
 # check results
 #
 # --------------------------------
-sudo gedit $config_dot_txt_file $cmdline_dot_txt_file \
+cat $config_dot_txt_file $cmdline_dot_txt_file \
 		$rndis_dot_conf_file \
 		$etc_hostname_file \
 		$etc_hosts_file
-# --------------------------------
-#
-# Manual Edits
-#
-# --------------------------------
-
-sudo gedit $etc_network_interfaces_file \
+cat $etc_network_interfaces_file \
 		$etc_dhcpcd_dot_conf
